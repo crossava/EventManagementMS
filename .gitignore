@@ -1,34 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.pyc
-*.pyo
-*.pdb
-*.egg
-*.egg-info/
-dist/
-build/
-
-# Virtual environment
 venv/
-env/
-.venv/
-.env/
-
-# VSCode
-.vscode/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# dotenv
-.env
-
-# Logs
+__pycache__/
 *.log
+*.pyc
+*.env
+*.env.dev
+*.pyc
+versions/
 
-# OS-specific
-.DS_Store
-Thumbs.db
+
+env.py
+settings.json
+
+**/media-orzp/
