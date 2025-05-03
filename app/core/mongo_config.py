@@ -1,6 +1,16 @@
-from pymongo import MongoClient
+import os
 
-MONGO_URI = "mongodb://jamik:e228Q$_Flb7@77.232.135.48:27017"
+from pymongo import MongoClient
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Получаем логин и пароль из .env
+username = os.getenv("mongo_username")
+password = os.getenv("mongo_password")
+
+# Формируем строку подключения
+MONGO_URI = f"mongodb://{username}:{password}@77.232.135.48:27017"
 
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
