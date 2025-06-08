@@ -5,6 +5,7 @@ from app.cli.producer import *
 from app.core.kafka_config import TOPICS
 from pydantic import ValidationError
 from app.services.event_service import *
+from app.services.task_service import *
 
 TOPIC_LIST = [TOPICS["requests"]]
 
@@ -39,6 +40,59 @@ def process_new_message(action, request_id, message):
         elif action == "get_user_events":
             result = get_user_events_service(message.get("data", {}), action)
             send_response(request_id, result)
+        elif action == "get_event_by_id":
+            result = get_event_by_id_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_event_by_title":
+            result = get_event_by_title_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_user_volunteer_count":
+            result = get_user_volunteer_count_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "assign_task":
+            result = assign_task_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "update_task":
+            result = update_task_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "delete_task":
+            result = delete_task_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "get_tasks_by_user":
+            result = get_tasks_by_user_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_tasks_by_event":
+            result = get_tasks_by_event_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_task_by_id":
+            result = get_task_by_id_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "add_task_comment":
+            result = add_task_comment_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "get_task_comments":
+            result = get_task_comments_service(message["data"], action)
+            send_response(request_id, result)
+            pass
+        elif action == "add_task_attachment":
+            result = add_task_attachment_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "remove_task_attachment":
+            result = remove_task_attachment_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "change_task_status":
+            result = change_task_status_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "get_tasks_assigned_by_user":
+            result = get_tasks_assigned_by_user_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_task_attachments":
+            result = get_task_attachments_service(message["data"], action)
+            send_response(request_id, result)
+
+        else:
+            raise ValueError(f"Неизвестное действие: {action}")
+
 
 
     except ValidationError as ve:
@@ -48,6 +102,8 @@ def process_new_message(action, request_id, message):
 
 
 def consume_messages():
+    print("🟢 Consumer инициализирован, слушаю темы:", TOPIC_LIST)
+
     consumer = get_consumer(TOPIC_LIST)
 
     try:
