@@ -6,6 +6,7 @@ from app.core.kafka_config import TOPICS
 from pydantic import ValidationError
 from app.services.event_service import *
 from app.services.task_service import *
+from app.services.chat_service import *
 
 TOPIC_LIST = [TOPICS["requests"]]
 
@@ -88,6 +89,18 @@ def process_new_message(action, request_id, message):
             send_response(request_id, result)
         elif action == "get_task_attachments":
             result = get_task_attachments_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "delete_tasks_by_event_id":
+            result = delete_tasks_by_event_id_service(message["data"], action)
+            send_response(request_id, result)
+        elif action == "get_events_with_user_as_volunteer":
+            result = get_events_with_user_as_volunteer_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "get_chat_messages":
+            result = get_chat_messages_service(message.get("data", {}), action)
+            send_response(request_id, result)
+        elif action == "add_chat_message":
+            result = add_chat_message_service(message.get("data", {}), action)
             send_response(request_id, result)
 
         else:

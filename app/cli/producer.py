@@ -26,6 +26,7 @@ def send_response(request_id, message):
     producer = get_producer()
 
     forward_to = message.get("message", {}).get("forward_to")
+    only_forward = message.get("message", {}).get("only_forward")
 
     response_message = {
         "request_id": request_id,
@@ -34,6 +35,9 @@ def send_response(request_id, message):
 
     if forward_to:
         response_message["forward_to"] = forward_to
+
+    if only_forward is not None:
+        response_message["only_forward"] = only_forward
 
     producer.produce(
         TOPICS["responses"],

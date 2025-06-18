@@ -1,34 +1,10 @@
 import json
 from datetime import datetime
 
-from app.models.volunteer_task import VolunteerTask
+from app.models.volunteer_task import VolunteerTask, VolunteerTaskUpdate
 from app.core.mongo_config import db
 from pydantic import ValidationError
 from bson import ObjectId, errors
-import boto3
-from botocore.client import Config
-
-s3 = boto3.client(
-    's3',
-    endpoint_url='https://storage.yandexcloud.net',
-    aws_access_key_id='YCAJEuNsk5G5pzlsGcS19fuGR',
-    aws_secret_access_key='YCOtUnaE1vgjH_shSozR8fkL71JSoRognKGKHgST',
-    config=Config(signature_version='s3v4'),
-    region_name='ru-central1'
-)
-
-def upload_file_to_yandex_s3(file_path, bucket_name, object_name):
-    s3.upload_file(file_path, bucket_name, object_name)
-    return f"https://{bucket_name}.storage.yandexcloud.net/{object_name}"
-
-
-class MongoJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, ObjectId):
-            return str(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
 
 
 def assign_task_service(task_data: dict, action: str):
@@ -50,11 +26,14 @@ def assign_task_service(task_data: dict, action: str):
         print(f"✅ Задача успешно создана с _id: {inserted_id}")
 
         task_dict["_id"] = inserted_id
+
+        forward_to_user = task_dict.get("assigned_to")
         return {
             "action": action,
             "message": {
                 "status": "success",
-                "task": task_dict
+                "task": task_dict,
+                "forward_to": [forward_to_user] if forward_to_user else []
             }
         }
 
@@ -86,8 +65,8 @@ def update_task_service(task_data: dict, action: str):
 
         update_fields = {k: v for k, v in task_data.items() if k != "_id"}
 
-        update_model = VolunteerTask(
-            **{**update_fields, "assigned_to": ObjectId("000000000000000000000000")})  # заглушка
+        update_model = VolunteerTaskUpdate(
+            **{**update_fields})  # заглушка
         validated = update_model.dict(exclude_unset=True, exclude={"created_at", "comments", "created_by"})
 
         validated["updated_at"] = datetime.utcnow()
@@ -349,11 +328,13 @@ def add_task_comment_service(data: dict, action: str):
 def add_task_attachment_service(data: dict, action: str):
     try:
         task_id = data.get("task_id")
+        user_id = data.get("user_id")
         attachments = data.get("attachments", [])
 
         if not task_id or not attachments:
             raise ValueError("Необходимы поля: task_id и attachments")
 
+        # Добавление вложений
         result = db.volunteer_tasks.update_one(
             {"_id": ObjectId(task_id)},
             {"$push": {"attachments": {"$each": attachments}}}
@@ -362,11 +343,28 @@ def add_task_attachment_service(data: dict, action: str):
         if result.modified_count == 0:
             raise ValueError("Задача не найдена")
 
+        # Получение обновлённой задачи
+        task = db.volunteer_tasks.find_one({"_id": ObjectId(task_id)})
+        if not task:
+            raise ValueError("Задача не найдена после обновления")
+
+        current_attachments = task.get("attachments", [])
+
+        # Определение, кому переслать сообщение
+        forward_to_user = None
+        if str(user_id) == task.get("assigned_to"):
+            forward_to_user = task.get("created_by")
+        else:
+            forward_to_user = task.get("assigned_to")
+
         return {
             "action": action,
             "message": {
                 "status": "success",
-                "details": f"{len(attachments)} вложений добавлено"
+                "task_id": task_id,
+                "details": f"{len(attachments)} вложений добавлено",
+                "attachments": attachments,
+                "forward_to": [forward_to_user] if forward_to_user else [],
             }
         }
 
@@ -534,5 +532,33 @@ def get_task_attachments_service(data: dict, action: str):
             "message": {
                 "status": "error",
                 "details": str(e)
+            }
+        }
+
+
+def delete_tasks_by_event_id_service(data: dict, action: str):
+    try:
+        event_id = data.get("_id")
+        if not event_id:
+            raise ValueError("Не передан event_id")
+
+        result = db.volunteer_tasks.delete_many({"event_id": event_id})
+        deleted_count = result.deleted_count
+
+        return {
+            "action": action,
+            "message": {
+                "status": "success",
+                "deleted_count": deleted_count,
+                "event_id": event_id
+            }
+        }
+
+    except Exception as e:
+        return {
+            "action": action,
+            "message": {
+                "status": "error",
+                "error": str(e)
             }
         }

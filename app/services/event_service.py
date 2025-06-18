@@ -5,7 +5,6 @@ from bson import ObjectId
 from app.models.events import Event, EventUpdate
 from pydantic import ValidationError, HttpUrl
 from app.core.mongo_config import db
-from copy import deepcopy
 from bson import ObjectId, errors
 
 
@@ -34,9 +33,14 @@ def serialize_event(event: dict) -> dict:
 def serialize_for_mongo(obj):
     if isinstance(obj, ObjectId):
         return str(obj)
-    if isinstance(obj, HttpUrl):
+    elif isinstance(obj, HttpUrl):
         return str(obj)
-    return obj  # datetime и другие типы оставить как есть
+    elif isinstance(obj, list):
+        return [serialize_for_mongo(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: serialize_for_mongo(value) for key, value in obj.items()}
+    else:
+        return obj
 
 
 def create_event_service(event_data: dict, action: str):
@@ -44,7 +48,7 @@ def create_event_service(event_data: dict, action: str):
         event = Event(**event_data)
         print(f"✅ Событие успешно создано: {event}")
 
-        event_dict = event.dict()  # не использовать mode="json"
+        event_dict = event.dict()
         event_dict.setdefault("status", "Новое")
 
         now = datetime.utcnow()
@@ -53,19 +57,35 @@ def create_event_service(event_data: dict, action: str):
         event_dict["created_by"] = event_data.get("created_by")
         event_dict["updated_by"] = event_data.get("created_by")
 
+        chat_data = {
+            "messages": []
+        }
+        inserted_chat = db.chats.insert_one(chat_data)
+        chat_id = str(inserted_chat.inserted_id)
+
+        event_dict["chat_id"] = chat_id
+
+        # Сохраняем событие
         event_to_insert = {k: serialize_for_mongo(v) for k, v in event_dict.items()}
-        inserted = db.events.insert_one(event_to_insert)
+        inserted_event = db.events.insert_one(event_to_insert)
+        inserted_event_id = str(inserted_event.inserted_id)
 
-        inserted_id = str(inserted.inserted_id)
+        print(f"🗂️ Событие сохранено с _id: {inserted_event_id}")
 
-        print(f"🗂️ Событие сохранено с _id: {inserted_id}")
-        event_to_insert["_id"] = inserted_id
+        db.chats.update_one(
+            {"_id": inserted_chat.inserted_id},
+            {"$set": {"event_id": inserted_event_id}}
+        )
+
+        event_to_insert["_id"] = inserted_event_id
 
         return {
             "action": action,
             "message": {
                 "status": "success",
-                "event": event_to_insert
+                "event": event_to_insert,
+                "only_forward": True,
+                "forward_to": "online_status"
             }
         }
 
@@ -104,6 +124,7 @@ def update_event_service(event_data: dict, action: str):
             raise ValueError(f"Событие с _id {event_id} не найдено")
 
         update_serialized["_id"] = event_id
+        updated_event = db.events.find_one({"_id": ObjectId(event_id)})
 
         print(f"🔄 Событие {event_id} успешно обновлено")
 
@@ -111,7 +132,9 @@ def update_event_service(event_data: dict, action: str):
             "action": action,
             "message": {
                 "status": "success",
-                "event": update_serialized
+                "event": updated_event,
+                "only_forward": True,
+                "forward_to": "online_status"
             }
         }
 
@@ -132,6 +155,8 @@ def delete_event_service(event_data: dict, action: str):
         if not event_id:
             raise ValueError("Не указан _id события для удаления")
 
+        event = db.events.find_one({"_id": ObjectId(event_id)})
+        forward_to = event.get("volunteers", [])
         result = db.events.delete_one({"_id": ObjectId(event_id)})
 
         if result.deleted_count == 0:
@@ -143,6 +168,8 @@ def delete_event_service(event_data: dict, action: str):
             "action": action,
             "message": {
                 "status": "success",
+                "only_forward": True,
+                "forward_to": "online_status",
                 "_id": event_id
             }
         }
@@ -217,7 +244,9 @@ def register_volunteer_service(event_data: dict, action: str):
             "message": {
                 "status": "success",
                 "_id": event_id,
-                "user_id": user_id
+                "user_id": user_id,
+                "only_forward": True,
+                "forward_to": "online_status"
             }
         }
 
@@ -276,7 +305,9 @@ def unregister_volunteer_service(event_data: dict, action: str):
             "message": {
                 "status": "success",
                 "_id": event_id,
-                "user_id": user_id
+                "user_id": user_id,
+                "only_forward": True,
+                "forward_to": "online_status"
             }
         }
 
@@ -297,8 +328,10 @@ def get_upcoming_events_service(event_data: dict, action: str):
         category = event_data.get("category", "all")
         now = datetime.utcnow()
 
+        # Запрос на получение ближайших активных мероприятий
         query = {
-            "start_datetime": {"$gt": now}
+            "start_datetime": {"$gt": now},
+            "status": "active"
         }
 
         if category != "all":
@@ -322,16 +355,27 @@ def get_upcoming_events_service(event_data: dict, action: str):
                 event["start_datetime"] = event["start_datetime"].isoformat()
             events.append(event)
 
+        # Подсчёт завершённых мероприятий
+        completed_query = {"status": "completed"}
+
+        completed_count = db.events.count_documents(completed_query)
+
+        active_query = {"status": "active"}
+
+        active_count = db.events.count_documents(active_query)
+
         return {
             "action": action,
             "message": {
                 "status": "success",
-                "events": events
+                "events": events,
+                "completed_events_count": completed_count,
+                "total_active_events_count": active_count
             }
         }
 
     except Exception as e:
-        print(f"❌ Ошибка при получении ближайших событий: {e}")
+        print(f"Ошибка при получении ближайших событий: {e}")
         return {
             "action": action,
             "message": {
@@ -358,11 +402,13 @@ def get_event_by_id_service(data: dict, action: str) -> dict:
         "event": serialized_event
     }
 
+
 def convert_datetime_fields(event: dict):
     for field in ["start_datetime", "created_at", "updated_at"]:
         if field in event and isinstance(event[field], datetime):
             event[field] = event[field].isoformat()
     return event
+
 
 def get_user_events_service(event_data: dict, action: str):
     try:
@@ -402,6 +448,7 @@ def get_user_events_service(event_data: dict, action: str):
                 "details": str(e)
             }
         }
+
 
 def get_event_by_title_service(data: dict, action: str) -> dict:
     try:
@@ -461,3 +508,37 @@ def get_user_volunteer_count_service(event_data: dict, action: str):
             }
         }
 
+
+def get_events_with_user_as_volunteer_service(event_data: dict, action: str):
+    try:
+        user_id = event_data.get("user_id")
+        if not user_id:
+            raise ValueError("Не передан user_id")
+
+        events_cursor = db.events.find({"volunteers": user_id})
+
+        events = []
+        for event in events_cursor:
+            event["_id"] = str(event["_id"])
+            convert_datetime_fields(event)
+            if "volunteers" in event:
+                event["volunteers"] = [str(v) for v in event["volunteers"]]
+            events.append(event)
+
+        return {
+            "action": action,
+            "message": {
+                "status": "success",
+                "events": events
+            }
+        }
+
+    except Exception as e:
+        print(f"❌ Ошибка при получении событий волонтёра: {e}")
+        return {
+            "action": action,
+            "message": {
+                "status": "error",
+                "details": str(e)
+            }
+        }
